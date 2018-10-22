@@ -758,8 +758,8 @@ class BigQueryBaseCursor(LoggingMixin):
 
     def run_load(self,
                  destination_project_dataset_table,
-                 schema_fields,
                  source_uris,
+                 schema_fields=None,
                  source_format='CSV',
                  create_disposition='CREATE_IF_NEEDED',
                  skip_leading_rows=0,
@@ -771,8 +771,10 @@ class BigQueryBaseCursor(LoggingMixin):
                  allow_quoted_newlines=False,
                  allow_jagged_rows=False,
                  schema_update_options=(),
-                 src_fmt_configs={},
-                 time_partitioning={}):
+                 src_fmt_configs=None,
+                 time_partitioning=None,
+                 cluster_fields=None,
+                 autodetect=False):
         """
         Executes a BigQuery load command to load data from Google Cloud Storage
         to BigQuery. See here:
@@ -790,7 +792,11 @@ class BigQueryBaseCursor(LoggingMixin):
         :type destination_project_dataset_table: string
         :param schema_fields: The schema field list as defined here:
             https://cloud.google.com/bigquery/docs/reference/v2/jobs#configuration.load
+            Required if autodetect=False; optional if autodetect=True.
         :type schema_fields: list
+        :param autodetect: Attempt to autodetect the schema for CSV and JSON
+            source files.
+        :type autodetect: bool
         :param source_uris: The source Google Cloud
             Storage URI (e.g. gs://some-bucket/some-file.txt). A single wild
             per-object name can be used.
@@ -843,6 +849,14 @@ class BigQueryBaseCursor(LoggingMixin):
         # if it's not, we raise a ValueError
         # Refer to this link for more details:
         #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.tableDefinitions.(key).sourceFormat
+
+        if schema_fields is None and not autodetect:
+            raise ValueError(
+                'You must either pass a schema or autodetect=True.')
+
+        if src_fmt_configs is None:
+            src_fmt_configs = {}
+
         source_format = source_format.upper()
         allowed_formats = [
             "CSV", "NEWLINE_DELIMITED_JSON", "AVRO", "GOOGLE_SHEETS",
@@ -874,6 +888,7 @@ class BigQueryBaseCursor(LoggingMixin):
 
         configuration = {
             'load': {
+                'autodetect': autodetect,
                 'createDisposition': create_disposition,
                 'destinationTable': {
                     'projectId': destination_project,
@@ -1463,7 +1478,14 @@ def _bq_cast(string_field, bq_type):
 
 
 def _split_tablename(table_input, default_project_id, var_name=None):
-    assert default_project_id is not None, "INTERNAL: No default project is specified"
+
+    if '.' not in table_input:
+        raise ValueError(
+            'Expected target table name in the format of '
+            '<dataset>.<table>. Got: {}'.format(table_input))
+
+    if not default_project_id:
+        raise ValueError("INTERNAL: No default project is specified")
 
     def var_print(var_name):
         if var_name is None:
